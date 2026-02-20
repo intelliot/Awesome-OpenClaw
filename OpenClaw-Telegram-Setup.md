@@ -1,76 +1,123 @@
 ## Telegram Setup
 
 ### Summary
+1. `openclaw pairing approve telegram` requires a code: `openclaw pairing approve telegram <CODE>`.
+2. `openclaw pairing list telegram` shows pending pairing requests, not the final allowlist.
+3. `openclaw onboard --skip-install --skip-model` are not valid flags.
+4. Config file is `~/.openclaw/openclaw.json` (or `OPENCLAW_CONFIG_PATH` override).
+5. `openclaw plugins enable telegram` is usually optional for normal setup.
+6. `channels add` does not prompt polling vs webhook. Polling is default unless webhook keys are set.
+7. `channels.telegram.requireMention` is invalid. Use `channels.telegram.groups."*".requireMention`.
 
-1. `openclaw pairing approve telegram` **requires a code** (`<CODE>`).  
-2. `openclaw pairing list telegram` shows **pending requests**, not approved allowlist users.  
-3. `openclaw onboard --skip-install --skip-model` flags are **not valid**.  
-4. Config path is `~/.openclaw/openclaw.json` (or env override), not `~/.openclaw/config.json`.  
-5. `openclaw plugins enable telegram` is usually **optional** for this flow.  
-6. `channels add` wizard does **not** currently prompt webhook vs polling (polling is default unless webhook config is set).
+### Command Prefix
+Use one command prefix consistently:
 
-### Setup Flow
-1. Use the installed CLI directly (recommended if already globally installed):
+- Global install: `openclaw ...`
+- Repo checkout (if `openclaw: command not found`): `pnpm openclaw ...`
+
+In examples below, replace `<cmd>` with either `openclaw` or `pnpm openclaw`.
+
+### Clean Up Invalid Config (if needed)
+If you see `Unrecognized key: "requireMention"` under `channels.telegram`:
+
 ```bash
-openclaw channels add
+<cmd> doctor --fix
+```
+
+This removes unknown keys and repairs legacy config shapes.
+
+### Setup Flow (No Manual JSON Editing)
+1. Add Telegram with the interactive wizard:
+```bash
+<cmd> channels add
 ```
 
 2. In the wizard:
 - Select `telegram`.
 - Enter bot token (or keep `TELEGRAM_BOT_TOKEN` if detected).
-- Optional: set display/account name.
-- Optional: configure DM policy.
-  - `pairing` (default/recommended): first DM gives a pairing code.
-  - `allowlist`: add your numeric Telegram user ID (wizard can resolve `@username` to ID if token is available).
+- Optional account/display name.
+- Optional DM policy:
+  - `pairing` (default/recommended)
+  - `allowlist` (wizard can resolve `@username` to numeric ID when token is available)
+  - `open`
+  - `disabled`
 
-3. Apply changes to runtime:
-- If running as a service:
+3. Restart/apply runtime:
 ```bash
-openclaw gateway restart
+<cmd> gateway restart
 ```
-- If running foreground:
+If you run foreground instead of service:
 ```bash
-openclaw gateway
+<cmd> gateway
 ```
-(`openclaw daemon restart` also exists as a service alias.)
 
-4. If DM policy is `pairing`, pair your user:
-- DM bot with `/start` or any message.
-- Then:
+4. If DM policy is `pairing`, approve first DM:
 ```bash
-openclaw pairing list telegram
-openclaw pairing approve telegram <CODE>
+<cmd> pairing list telegram
+<cmd> pairing approve telegram <CODE>
 ```
 
 5. Verify:
 ```bash
-openclaw channels status --probe
+<cmd> channels status --probe
 ```
 
-### Test Cases / Scenarios
-1. **Pairing mode path**: DM bot -> code appears -> approve with `<CODE>` -> replies work.
-2. **Allowlist mode path**: your ID pre-added -> DM should work without pairing code.
-3. **Service path**: `openclaw gateway restart` applies config.
-4. **Plugin edge case**: if Telegram plugin was manually disabled/denied, enable/fix plugin policy first, then rerun `channels add`.
+### Make Bot Reply Without `@mention`
+Session-only override in Telegram:
+- Send `/activation always` in that chat.
 
-### Assumptions / Defaults
-1. You already have a valid OpenClaw config (true if Slack is already configured).
-2. You want no manual JSON editing.
-3. Default Telegram DM policy is `pairing`.
-4. Long polling is default unless webhook fields are explicitly configured.
+Persistent config:
+```bash
+<cmd> config set channels.telegram.groups.*.requireMention false
+```
 
-### Canonical docs
-- [https://docs.openclaw.ai/channels/telegram](https://docs.openclaw.ai/channels/telegram)
-- [https://docs.openclaw.ai/cli/channels](https://docs.openclaw.ai/cli/channels)
-- [https://docs.openclaw.ai/channels/pairing](https://docs.openclaw.ai/channels/pairing)
-- [https://docs.openclaw.ai/cli/gateway](https://docs.openclaw.ai/cli/gateway)
-- [https://docs.openclaw.ai/cli/onboard](https://docs.openclaw.ai/cli/onboard)
+If group replies are still blocked by sender policy, open group sender policy:
+```bash
+<cmd> config set channels.telegram.groupPolicy open
+```
 
-### Verified in code
-- `/openclaw/src/commands/channels/add.ts`
-- `/openclaw/src/commands/onboard-channels.ts`
-- `/openclaw/src/channels/plugins/onboarding/telegram.ts`
-- `/openclaw/src/cli/pairing-cli.ts`
-- `/openclaw/src/cli/program/register.onboard.ts`
-- `/openclaw/src/config/paths.ts`
-- `/openclaw/src/cli/daemon-cli/register.ts`
+Then restart:
+```bash
+<cmd> gateway restart
+```
+
+### Telegram Side Requirement (Important)
+If bot says it cannot see normal group messages:
+
+1. In `@BotFather`, run `/setprivacy` and disable privacy mode for this bot.
+2. Remove and re-add the bot to the group.
+
+Without this, non-mention messages may never reach the bot.
+
+### Common Pitfalls
+1. `channels.telegram.requireMention` is invalid (top-level key).
+2. If `channels.telegram.groups` exists, it becomes a group allowlist. Include `"*"` or specific chat IDs you want allowed.
+3. `groupPolicy: allowlist` requires sender IDs in `groupAllowFrom` (or fallback `allowFrom`).
+4. Telegram allowlists should be numeric IDs. Legacy `@username` entries should be migrated with `doctor --fix`.
+
+### Plugin Edge Case
+Only needed if Telegram plugin was explicitly disabled/denied:
+
+```bash
+<cmd> plugins enable telegram
+<cmd> gateway restart
+```
+
+### Telegram Bot API Limitation: Group Members
+Telegram Bot API cannot return a full list of all group members in one call.
+
+What it can do:
+1. `getChatAdministrators` (admins only)
+2. `getChatMemberCount` (count only)
+3. `getChatMember(chat_id, user_id)` (single user lookup)
+4. Membership updates via `chat_member` events (typically requires admin privileges)
+
+### Canonical Docs
+- https://docs.openclaw.ai/channels/telegram
+- https://docs.openclaw.ai/cli/channels
+- https://docs.openclaw.ai/channels/pairing
+- https://docs.openclaw.ai/cli/gateway
+- https://docs.openclaw.ai/cli/doctor
+- https://docs.openclaw.ai/cli/config
+- https://core.telegram.org/bots/api
+- https://core.telegram.org/bots/faq
