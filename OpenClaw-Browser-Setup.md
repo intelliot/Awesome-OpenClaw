@@ -1,3 +1,240 @@
+## Mac-First Headed Browser Relay + Linux Gateway Browser
+
+### Summary
+`Mac Relay First` - for true headed usage.
+Plan is to:
+1. Keep the Gateway on your Debian/Ubuntu Proxmox LXC.
+2. Use Tailscale even on same LAN (recommended and safe).
+3. Pair your Mac as a node host, run Chrome extension relay there, and drive it from the Gateway.
+4. Also install a supported browser on Linux for fallback/automation.
+5. Add multi-browser support in a controlled way after first success.
+
+### Public Interfaces / Types Used (No API Changes)
+No product API changes are needed. This tutorial uses existing config + CLI/tool interfaces:
+
+- Config keys:
+`browser.enabled`, `browser.defaultProfile`, `browser.executablePath`, `browser.headless`, `browser.noSandbox`, `gateway.nodes.browser.mode`, `gateway.nodes.browser.node`, `nodeHost.browserProxy.enabled`, `agents.defaults.sandbox.browser.allowHostControl`
+- CLI surfaces:
+`openclaw browser ...`, `openclaw browser extension ...`, `openclaw node ...`, `openclaw nodes pending|approve|list`
+- Agent tool params:
+`browser` tool with `profile`, `target`, `node`, `action`
+- Important behavior lock-in:
+When using agent tool with `profile="chrome"`, explicitly pass `target="node"` for remote Mac relay control.
+
+### Step-by-Step Implementation
+
+### 1. Linux Gateway preflight (LXC)
+Run on the Linux Gateway host:
+
+```bash
+source /etc/os-release && echo "$ID $VERSION_ID"
+dpkg --print-architecture
+openclaw --version
+openclaw gateway status
+openclaw config get browser
+openclaw config get gateway.nodes.browser
+```
+
+Expected:
+- Debian/Ubuntu
+- Architecture known (`amd64` vs `arm64`)
+- Gateway running
+
+### 2. Secure connectivity baseline (Tailscale on same LAN is OK and recommended)
+On Linux + Mac:
+1. Bring both hosts onto the same tailnet.
+2. Keep Gateway private; do not expose browser relay ports publicly.
+
+On Linux Gateway host:
+
+```bash
+openclaw config set gateway.auth.mode token
+openclaw config set gateway.auth.token "$(openssl rand -hex 32)"
+openclaw config set gateway.bind tailnet
+openclaw gateway restart
+openclaw gateway status
+```
+
+Record:
+- Tailnet IP/hostname of Linux Gateway
+- `gateway.auth.token` (needed by Mac node host)
+
+### 3. Install supported browser on Linux LXC (first local baseline)
+Recommended first local browser on Ubuntu/Debian LXC: `Google Chrome stable` (amd64), because Chromium on Ubuntu commonly routes via snap transitional packaging.
+
+If `amd64`:
+
+```bash
+wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install -y ./google-chrome-stable_current_amd64.deb
+```
+
+Configure OpenClaw browser on Linux:
+
+```bash
+openclaw config set browser.enabled true --json
+openclaw config set browser.defaultProfile openclaw
+openclaw config set browser.executablePath /usr/bin/google-chrome-stable
+openclaw config set browser.headless false --json
+openclaw config set browser.noSandbox false --json
+openclaw gateway restart
+```
+
+Smoke test:
+
+```bash
+openclaw browser --browser-profile openclaw status
+openclaw browser --browser-profile openclaw start
+openclaw browser --browser-profile openclaw tabs
+```
+
+If launch fails in container with sandbox error:
+
+```bash
+openclaw config set browser.noSandbox true --json
+openclaw gateway restart
+openclaw browser --browser-profile openclaw start
+```
+
+### 4. Mac node host setup (for headed relay control)
+On Mac:
+
+```bash
+openclaw --version
+export OPENCLAW_GATEWAY_TOKEN="<token-from-linux-gateway>"
+openclaw node install --host <linux-gateway-tailnet-ip-or-name> --port 18789 --display-name "mac-browser-node"
+openclaw node restart
+openclaw node status
+```
+
+On Linux Gateway host, approve pairing:
+
+```bash
+openclaw nodes pending
+openclaw nodes approve <requestId>
+openclaw nodes list
+```
+
+Enable browser routing policy on Gateway:
+
+```bash
+openclaw config set gateway.nodes.browser.mode auto
+# If more than one browser-capable node exists:
+# openclaw config set gateway.nodes.browser.node "<node-id-or-name>"
+openclaw gateway restart
+```
+
+### 5. Install and attach OpenClaw Browser Relay extension on Mac
+On Mac:
+
+```bash
+openclaw browser extension install
+openclaw browser extension path
+```
+
+In Chrome:
+1. Open `chrome://extensions`
+2. Enable `Developer mode`
+3. `Load unpacked` and choose the path from `openclaw browser extension path`
+4. Pin `OpenClaw Browser Relay` icon
+5. Open target tab, click extension icon once to attach
+
+Badge states:
+- `ON` = attached (good)
+- `…` = connecting
+- `!` = relay unreachable
+
+### 6. Verify relay path from Linux Gateway
+From Linux Gateway host:
+
+```bash
+openclaw browser --browser-profile chrome tabs
+openclaw browser --browser-profile chrome open https://example.com
+openclaw browser --browser-profile chrome snapshot --interactive --compact
+openclaw browser --browser-profile chrome screenshot --full-page
+```
+
+For agent-driven calls (important for remote Mac relay):
+- Use `profile="chrome"` plus `target="node"` (and optionally `node="<mac-node-id>"`).
+
+### 7. Browser capture workflow for web-dev progress
+Operational loop:
+1. `openclaw browser --browser-profile chrome open <dev-url>`
+2. `openclaw browser --browser-profile chrome snapshot --interactive --compact`
+3. Interact (`click`, `type`, `navigate`) as needed
+4. Capture:
+   `openclaw browser --browser-profile chrome screenshot --full-page`
+5. Use returned `MEDIA:<path>` artifacts for progress checkpoints
+
+### 8. Multi-browser expansion (after first success)
+Order to add:
+1. Chrome (done)
+2. Brave
+3. Edge
+4. Chromium (only where packaging is reliable for your distro)
+
+Rules:
+- Local OpenClaw-managed profiles share global `browser.executablePath`, so switch executable per run when needed.
+- For stable concurrent multi-browser setups, prefer separate remote CDP endpoints or separate nodes and pin with `gateway.nodes.browser.node`.
+- You can create additional routing profiles:
+```bash
+openclaw browser create-profile --name brave-remote --cdp-url http://127.0.0.1:9223 --color "#00AA00"
+```
+
+## Test Cases and Scenarios
+
+1. Linux local profile starts:
+`openclaw browser --browser-profile openclaw start` shows running state.
+2. Mac relay attach:
+Extension badge becomes `ON` on selected tab.
+3. Gateway-to-node routing works:
+`openclaw browser --browser-profile chrome tabs` on Linux returns Mac tab list.
+4. Agent node targeting works:
+Agent browser calls succeed only when `target="node"` is specified for remote relay path.
+5. Screenshot capture path works:
+`openclaw browser --browser-profile chrome screenshot --full-page` returns `MEDIA:<path>`.
+6. Failure signatures handled:
+- `Chrome extension relay ... no tab connected` → click extension icon on tab.
+- `Failed to start Chrome CDP` → check executable path; in LXC consider `browser.noSandbox=true`.
+
+## Assumptions and Defaults Chosen
+- Distro is Debian/Ubuntu (your selection).
+- Primary milestone is Mac headed relay first.
+- Tailscale is used even on same LAN (recommended default).
+- Linux browser is installed as a fallback and for non-relay scenarios.
+- Gateway and node remain private (tailnet/loopback), not public-exposed.
+
+## References
+- [https://docs.openclaw.ai/tools/browser](https://docs.openclaw.ai/tools/browser)
+- [https://docs.openclaw.ai/tools/chrome-extension](https://docs.openclaw.ai/tools/chrome-extension)
+- [https://docs.openclaw.ai/tools/browser-linux-troubleshooting](https://docs.openclaw.ai/tools/browser-linux-troubleshooting)
+- [https://docs.openclaw.ai/cli/browser](https://docs.openclaw.ai/cli/browser)
+- [https://docs.openclaw.ai/cli/node](https://docs.openclaw.ai/cli/node)
+- [https://docs.openclaw.ai/nodes](https://docs.openclaw.ai/nodes)
+- [https://docs.openclaw.ai/gateway/security](https://docs.openclaw.ai/gateway/security)
+- [https://docs.openclaw.ai/gateway/tailscale](https://docs.openclaw.ai/gateway/tailscale)
+- [https://support.google.com/chrome/a/answer/9025903?hl=en](https://support.google.com/chrome/a/answer/9025903?hl=en)
+- [https://support.google.com/chrome/a/answer/9025926?hl=en](https://support.google.com/chrome/a/answer/9025926?hl=en)
+- [https://brave.com/linux/](https://brave.com/linux/)
+- [https://www.microsoft.com/edge/business/download](https://www.microsoft.com/edge/business/download)
+- [https://ubuntu.com/blog/chromium-in-ubuntu-deb-to-snap-transition](https://ubuntu.com/blog/chromium-in-ubuntu-deb-to-snap-transition)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # OpenClaw Headed Browser Setup
 
 (Verified February 20, 2026)
