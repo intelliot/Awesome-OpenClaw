@@ -41,10 +41,20 @@ With only 1-2 GB RAM, you can run small (which is half the size but 20% worse) t
 # 2) Configure OpenClaw audio transcription to be deterministic + local only
 $OC config set tools.media.audio.enabled true --json
 $OC config set tools.media.audio.maxBytes 20971520 --json
-$OC config set tools.media.audio.models '[{"type":"cli","command":"/home/you/whisper.cpp/build/bin/whisper-cli","args":["-m","/home/you/whisper.cpp/models/ggml-small.en.bin","-otxt","-of","{{OutputBase}}","-np","-nt","{{MediaPath}}"],"timeoutSeconds":90}]' --json
 ```
 
-Replace `/home/you/...` with your real path.
+EXAMPLE: for `$ ./build/bin/whisper-cli -m /root/whisper.cpp/models/ggml-medium.en.bin -f samples/jfk.wav`:
+```
+$OC config set tools.media.audio.models '[{"type":"cli","command":"/root/whisper.cpp/build/bin/whisper-cli","args":["-m","/root/whisper.cpp/models/ggml-medium.en.bin","-otxt","-of","{{OutputBase}}","-np","-nt","{{MediaPath}}"],"timeoutSeconds":180}]' --json
+```
+
+Below, replace `/home/you/...` with your real path.
+
+```
+$OC config set tools.media.audio.models '[{"type":"cli","command":"/home/you/whisper.cpp/build/bin/whisper-cli","args":["-m","/home/you/whisper.cpp/models/ggml-medium.en.bin","-otxt","-of","{{OutputBase}}","-np","-nt","{{MediaPath}}"],"timeoutSeconds":180}]' --json
+```
+
+Or, for small: `$OC config set tools.media.audio.models '[{"type":"cli","command":"/home/you/whisper.cpp/build/bin/whisper-cli","args":["-m","/home/you/whisper.cpp/models/ggml-small.en.bin","-otxt","-of","{{OutputBase}}","-np","-nt","{{MediaPath}}"],"timeoutSeconds":90}]' --json`
 
 ```bash
 # 3) Telegram channel setup + group behavior
