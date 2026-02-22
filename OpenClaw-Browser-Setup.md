@@ -1,3 +1,67 @@
+I just ran all three browser validation commands (status, start, tabs).
+
+Results:                                                                                                                                                                                                                                                   
+
+ - browser status: profile openclaw, enabled, currently not running                                                                                                                                                                                           
+ - browser start: fails                                                                                                                                                                                                                                       
+ - browser tabs: no tabs (because browser didn’t start)                                                                                                                                                                                                       
+ Current failure is a gateway timeout during browser start:                                                                                                                                                                                               
+ Error: gateway timeout after 15000ms
+
+ It’s a browser-launch/runtime issue.                                                                                                                                                                                                 
+ You can check gateway logs + browser launch diagnostics.
+
+Most likely fix first: increase the browser start timeout.  
+There’s a timeout mismatch in code:
+
+- Client `start` call uses `15000ms` in `/openclaw/src/cli/browser-cli-manage.ts`.
+- First launch can consume up to ~30s in `/openclaw/src/browser/chrome.ts` (bootstrap + relaunch + CDP wait).
+
+Use this order:
+
+1. Retry with longer timeout (most likely immediate fix).
+```bash
+cd /root/openclaw
+pnpm openclaw browser --timeout 60000 --browser-profile openclaw start
+pnpm openclaw browser --browser-profile openclaw status --json
+```
+
+2. If it still fails, Linux LXC is probably failing headed Chrome (no display/session).  
+Set Linux browser to headless for baseline:
+```bash
+cd /root/openclaw
+pnpm openclaw config set browser.headless true --json
+# restart your foreground gateway process in tmux, then retry start
+pnpm openclaw browser --timeout 60000 --browser-profile openclaw start
+```
+
+3. If still failing, then try container compatibility mode:
+```bash
+cd /root/openclaw
+pnpm openclaw config set browser.noSandbox true --json
+# restart gateway, retry start
+```
+Only keep `noSandbox=true` if required, and document why.
+
+4. Optional sanity check while debugging local launch: temporarily avoid node routing.
+```bash
+cd /root/openclaw
+pnpm openclaw config set gateway.nodes.browser.mode off
+```
+
+If you want, next I can give you a tight diagnostic checklist to capture the exact launch error in one pass.
+
+
+
+
+
+
+
+
+
+
+
+
 ## Tailnet + Mac Relay Setup
 
 ### Summary
@@ -23,17 +87,6 @@ pnpm openclaw --version
 ```
 
 2. Initialize secure gateway + browser defaults.
-```bash
-pnpm openclaw config set gateway.mode local
-pnpm openclaw config set gateway.bind tailnet
-pnpm openclaw config set gateway.auth.mode token
-pnpm openclaw config set gateway.auth.token "$(openssl rand -hex 32)"
-pnpm openclaw config set browser.enabled true --json
-pnpm openclaw config set browser.defaultProfile openclaw
-pnpm openclaw config set browser.headless false --json
-pnpm openclaw config set browser.noSandbox false --json
-pnpm openclaw config set gateway.nodes.browser.mode auto
-```
 
 3. Install Chrome baseline on Ubuntu 24.04 amd64 and set executable.
 ```bash
