@@ -1,4 +1,142 @@
+## Tailnet + Mac Relay Setup
+
+### Summary
+Use source-checkout workflow consistently from repo root with `pnpm openclaw ...`.  
+Primary target remains:
+1. Secure Gateway on Ubuntu LXC (`bind=tailnet`, token auth).
+2. `browser.defaultProfile=openclaw`.
+3. Mac node host + Chrome extension relay for headed control.
+4. Deterministic node pinning and watchdog checks.
+
+### Public Interfaces / Config Keys
+No API/type changes. Config and tools used:
+- `gateway.mode`, `gateway.bind`, `gateway.auth.mode`, `gateway.auth.token`
+- `browser.enabled`, `browser.defaultProfile`, `browser.executablePath`, `browser.headless`, `browser.noSandbox`
+- `gateway.nodes.browser.mode`, `gateway.nodes.browser.node`
+- Browser/Node CLI via `pnpm openclaw ...`
+
+### Step-by-step
+1. Run all OpenClaw commands from repo root (example: `/root/openclaw`).
+```bash
+cd /root/openclaw
+pnpm openclaw --version
+```
+
+2. Initialize secure gateway + browser defaults.
+```bash
+pnpm openclaw config set gateway.mode local
+pnpm openclaw config set gateway.bind tailnet
+pnpm openclaw config set gateway.auth.mode token
+pnpm openclaw config set gateway.auth.token "$(openssl rand -hex 32)"
+pnpm openclaw config set browser.enabled true --json
+pnpm openclaw config set browser.defaultProfile openclaw
+pnpm openclaw config set browser.headless false --json
+pnpm openclaw config set browser.noSandbox false --json
+pnpm openclaw config set gateway.nodes.browser.mode auto
+```
+
+3. Install Chrome baseline on Ubuntu 24.04 amd64 and set executable.
+```bash
+wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install -y ./google-chrome-stable_current_amd64.deb
+pnpm openclaw config set browser.executablePath /usr/bin/google-chrome-stable
+```
+
+4. Run gateway in tmux foreground (LXC-friendly).
+```bash
+tmux new -s openclaw-gw 'cd /root/openclaw && pnpm openclaw gateway run'
+```
+
+5. Validate local browser profile.
+```bash
+cd /root/openclaw
+pnpm openclaw browser --browser-profile openclaw status
+pnpm openclaw browser --browser-profile openclaw start
+pnpm openclaw browser --browser-profile openclaw tabs
+```
+
+6. Exception path only if required: enable `noSandbox`.
+```bash
+pnpm openclaw config set browser.noSandbox true --json
+```
+Record date + error + reason when this is enabled.
+
+7. Pair Mac as node host.
+- On Mac:
+```bash
+cd /path/to/openclaw
+export OPENCLAW_GATEWAY_TOKEN="<gateway-token>"
+pnpm openclaw node install --host <gateway-tailnet-ip-or-name> --port 18789 --display-name "mac-browser-node"
+pnpm openclaw node restart
+pnpm openclaw node status
+```
+- On Linux Gateway host:
+```bash
+cd /root/openclaw
+pnpm openclaw nodes pending
+pnpm openclaw nodes approve <requestId>
+pnpm openclaw nodes list
+```
+
+8. Pin browser automation to the Mac node.
+```bash
+cd /root/openclaw
+pnpm openclaw config set gateway.nodes.browser.node "<mac-node-id-or-name>"
+```
+
+9. Install and attach Browser Relay on Mac.
+```bash
+cd /path/to/openclaw
+pnpm openclaw browser extension install
+pnpm openclaw browser extension path
+```
+Then in Chrome: load unpacked, pin icon, click on target tab until badge is `ON`.
+
+10. Use profiles intentionally.
+```bash
+cd /root/openclaw
+pnpm openclaw browser --browser-profile openclaw start
+pnpm openclaw browser --browser-profile chrome tabs
+pnpm openclaw browser --browser-profile chrome snapshot --interactive --compact
+pnpm openclaw browser --browser-profile chrome screenshot --full-page
+```
+
+11. Watchdog checks (repo-root aware).
+```bash
+watch -n 30 'cd /root/openclaw && pnpm openclaw gateway health --timeout 3000 >/dev/null && echo OK || echo FAIL'
+```
+Cron example:
+```cron
+*/2 * * * * cd /root/openclaw && pnpm openclaw gateway health --timeout 3000 >/dev/null 2>&1 || echo "$(date -Is) gateway unhealthy" >> /tmp/openclaw/gateway-watchdog.log
+```
+
+### Test Cases
+1. `cd /root/openclaw && pnpm openclaw gateway health` succeeds from tailnet clients with token.
+2. `pnpm openclaw browser --browser-profile openclaw start` launches headed local browser.
+3. Chrome extension badge on Mac target tab is `ON`.
+4. `pnpm openclaw browser --browser-profile chrome tabs` from Linux returns Mac relay tabs.
+5. `pnpm openclaw browser --browser-profile chrome screenshot --full-page` returns `MEDIA:<path>`.
+6. Node pinning remains deterministic after reconnects (`gateway.nodes.browser.node` set).
+
+### Assumptions and Defaults
+- Source checkout workflow is authoritative; all commands use `pnpm openclaw`.
+- Default profile is `openclaw`; `chrome` is opt-in relay takeover.
+- `browser.noSandbox=false` unless LXC constraints force exception.
+- `bind=tailnet` with strong token auth is primary operational model for your remote UI requirement.
+
+
+
+
+
+
+
+
+
+
+
+
 ## Mac-First Headed Browser Relay + Linux Gateway Browser
+
 
 ### Summary
 `Mac Relay First` - for true headed usage.
