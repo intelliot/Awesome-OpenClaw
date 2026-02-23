@@ -1,3 +1,34 @@
+ ```text                                                                                                                      
+   You are running on the same Proxmox host as another OpenClaw setup with a working remote browser node.                     
+                                                                                                                              
+   For all browser automation tasks, use this exact browser tool routing:                                                     
+   - target: "node"                                                                                                           
+   - node: "Mac Browser Node"                                                                                                 
+   - profile: "openclaw"                                                                                                      
+                                                                                                                              
+   Do NOT use host/default browser path for now.                                                                              
+   Do NOT omit target/node/profile.                                                                                           
+   Always keep actions on the same tab by reusing targetId returned from snapshot.                                            
+                                                                                                                              
+   Preferred flow:                                                                                                            
+   1) browser.start (target=node, node="Mac Browser Node", profile="openclaw") if needed                                      
+   2) browser.open or browser.tabs                                                                                            
+   3) browser.snapshot (target=node, node="Mac Browser Node", profile="openclaw", refs="aria")                                
+   4) browser.act using refs from that snapshot, with same targetId                                                           
+   5) browser.screenshot when visual confirmation is needed                                                                   
+                                                                                                                              
+   Important:                                                                                                                 
+   - Avoid relay/extension paths unless explicitly requested.                                                                 
+   - If browser calls fail, retry once with the same node/profile before switching strategy.                                  
+   - Keep interactions deterministic (snapshot → act), avoid blind waits unless necessary.                                    
+ ```
+
+
+
+
+
+
+
 `pnpm add playwright` would make `pnpm exec playwright ...` available, but it is **not** the default/required setup for this OpenClaw repo.
 
 Evidence:
