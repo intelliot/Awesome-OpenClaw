@@ -1,3 +1,156 @@
+ ```text                                                                                                                      
+   You are running on the same Proxmox host as another OpenClaw setup with a working remote browser node.                     
+                                                                                                                              
+   For all browser automation tasks, use this exact browser tool routing:                                                     
+   - target: "node"                                                                                                           
+   - node: "Mac Browser Node"                                                                                                 
+   - profile: "openclaw"                                                                                                      
+                                                                                                                              
+   Do NOT use host/default browser path for now.                                                                              
+   Do NOT omit target/node/profile.                                                                                           
+   Always keep actions on the same tab by reusing targetId returned from snapshot.                                            
+                                                                                                                              
+   Preferred flow:                                                                                                            
+   1) browser.start (target=node, node="Mac Browser Node", profile="openclaw") if needed                                      
+   2) browser.open or browser.tabs                                                                                            
+   3) browser.snapshot (target=node, node="Mac Browser Node", profile="openclaw", refs="aria")                                
+   4) browser.act using refs from that snapshot, with same targetId                                                           
+   5) browser.screenshot when visual confirmation is needed                                                                   
+                                                                                                                              
+   Important:                                                                                                                 
+   - Avoid relay/extension paths unless explicitly requested.                                                                 
+   - If browser calls fail, retry once with the same node/profile before switching strategy.                                  
+   - Keep interactions deterministic (snapshot → act), avoid blind waits unless necessary.                                    
+ ```
+
+
+
+
+
+
+
+`pnpm add playwright` would make `pnpm exec playwright ...` available, but it is **not** the default/required setup for this OpenClaw repo.
+
+Evidence:
+- `/openclaw/package.json` includes `playwright-core` and does not include `playwright`.
+- OpenClaw browser code imports `playwright-core` (for example `/openclaw/src/browser/pw-session.ts`).
+- In this repo, `pnpm exec playwright install chromium --dry-run` fails (`Command "playwright" not found`), while `pnpm exec playwright-core install chromium --dry-run` works.
+
+Best command here:
+```bash
+cd ~/github/openclaw
+pnpm exec playwright-core install chromium
+```
+
+Nuance:
+- OpenClaw docs also say if you hit `Playwright is not available in this gateway build`, install full `playwright`. That is a fallback for certain builds, not the baseline repo setup.
+
+Sources:
+- [OpenClaw Browser docs (Playwright requirement + Docker command)](https://docs.openclaw.ai/tools/browser)
+- [Playwright release notes (CLI rename context)](https://playwright.dev/docs/release-notes#version-138)
+- [Playwright browsers docs (download/cache behavior)](https://playwright.dev/docs/browsers)
+
+We do NOT need to install the full playwright package.
+
+# OpenClaw Browser Tool Setup
+
+## Summary
+`pnpm exec playwright install chromium` fails in this repo because `/openclaw/package.json` installs `playwright-core`, not `playwright`.  
+Use `pnpm exec playwright-core install chromium` (or `node node_modules/playwright-core/cli.js install chromium`) for local installs.  
+For sandbox browser, use OpenClaw’s sandbox browser image flow (`scripts/sandbox-browser-setup.sh`), not Playwright browser downloads.  
+Playwright downloads bundled browser binaries; disk use is typically a few hundred MB (~200MB).
+
+## Public Interfaces / Config
+1. `browser.*` in `~/.openclaw/openclaw.json` (host browser tool behavior).
+2. `agents.defaults.sandbox.browser.*` in `~/.openclaw/openclaw.json` (sandbox browser behavior).
+3. `PLAYWRIGHT_BROWSERS_PATH` (optional cache location control).
+
+## Setup Steps
+1. Use the correct Playwright CLI for this repo.
+```bash
+cd ~/github/openclaw
+pnpm exec playwright-core install chromium
+```
+2. If you want a no-download check first, use dry-run.
+```bash
+pnpm exec playwright-core install chromium --dry-run
+```
+
+--
+
+pnpm exec playwright-core install chromium
+Downloading Chrome for Testing 145.0.7632.6 (playwright chromium v1208) from https://cdn.playwright.dev/builds/cft/145.0.7632.6/mac-arm64/chrome-mac-arm64.zip
+162.3 MiB [====================] 100% 0.0s
+Chrome for Testing 145.0.7632.6 (playwright chromium v1208) downloaded to /Users/hotprompts.org/Library/Caches/ms-playwright/chromium-1208
+Downloading FFmpeg (playwright ffmpeg v1011) from https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-mac-arm64.zip
+1 MiB [====================] 100% 0.0s
+FFmpeg (playwright ffmpeg v1011) downloaded to /Users/hotprompts.org/Library/Caches/ms-playwright/ffmpeg-1011
+Downloading Chrome Headless Shell 145.0.7632.6 (playwright chromium-headless-shell v1208) from https://cdn.playwright.dev/builds/cft/145.0.7632.6/mac-arm64/chrome-headless-shell-mac-arm64.zip
+91.1 MiB [====================] 100% 0.0s
+Chrome Headless Shell 145.0.7632.6 (playwright chromium-headless-shell v1208) downloaded to /Users/hotprompts.org/Library/Caches/ms-playwright/chromium_headless_shell-1208
+
+Check if the following makes sense; if it does, then do it.
+
+Configure/verify host managed browser (recommended default profile).
+```bash
+openclaw config set browser.defaultProfile openclaw
+openclaw browser --browser-profile openclaw status
+openclaw browser --browser-profile openclaw start
+openclaw browser --browser-profile openclaw snapshot
+```
+
+4. If OpenClaw cannot find a browser binary, set it explicitly.
+```bash
+openclaw config set browser.executablePath "/path/to/chrome-or-brave"
+```
+
+5. For sandbox browser mode, build the dedicated image.
+```bash
+cd ~/github/openclaw
+scripts/sandbox-browser-setup.sh
+```
+
+6. Enable sandbox browser and refresh containers.
+```bash
+openclaw sandbox recreate --browser --all
+openclaw sandbox list --browser
+```
+
+7. If running gateway in Docker, use OpenClaw’s documented non-`npx` command.
+```bash
+docker compose run --rm openclaw-cli \
+  node /app/node_modules/playwright-core/cli.js install chromium
+```
+
+## Validation Scenarios
+1. `pnpm exec playwright-core --help` succeeds.
+2. `pnpm exec playwright install chromium` fails in this repo (expected).
+3. `openclaw browser ... status/start/snapshot` works for profile `openclaw`.
+4. `openclaw sandbox list --browser` shows browser containers when sandbox browser is enabled.
+
+## Assumptions and Defaults
+1. Workspace is `/openclaw`.
+2. You want OpenClaw-managed profile (`openclaw`) as default.
+3. You are using `pnpm` (recommended for this repo); npm warning `allow-build-scripts` is from pnpm-specific `.npmrc`.
+
+## Fact Check Outcome
+1. Yes, Playwright browser install downloads bundled binaries.
+2. Size is usually “few hundred MB.” Playwright docs show Chromium around `281M` (example), and your dry-run shows Chromium + headless shell + ffmpeg artifacts.
+
+## References
+1. [OpenClaw browser docs](https://docs.openclaw.ai/tools/browser)
+2. [OpenClaw Docker docs](https://docs.openclaw.ai/install/docker)
+3. [OpenClaw sandboxing docs](https://docs.openclaw.ai/gateway/sandboxing)
+4. [Playwright installation docs](https://playwright.dev/docs/intro)
+5. [Playwright browser binaries and disk usage](https://playwright.dev/docs/browsers)
+6. [Playwright release notes (`playwright-core` CLI rename)](https://playwright.dev/docs/release-notes#version-138)
+
+
+
+
+
+
+
 I just ran all three browser validation commands (status, start, tabs).
 
 Results:                                                                                                                                                                                                                                                   
@@ -114,7 +267,13 @@ pnpm openclaw config set browser.noSandbox true --json
 ```
 Record date + error + reason when this is enabled.
 
-7. Pair Mac as node host.
+--
+
+Can we be the Mac to pair with other openclaw instances on our instranet? So they can Pair Mac as node host.
+
+Just do initial setup on your machine, then give me the full prompt with any necessary context to paste to the tui of another openclaw on our intranet so that it can start using our Brave browser for its headful browser tool.
+
+EXAMPLE:
 - On Mac:
 ```bash
 cd /path/to/openclaw
@@ -123,6 +282,7 @@ pnpm openclaw node install --host <gateway-tailnet-ip-or-name> --port 18789 --di
 pnpm openclaw node restart
 pnpm openclaw node status
 ```
+
 - On Linux Gateway host:
 ```bash
 cd /root/openclaw
@@ -136,6 +296,10 @@ pnpm openclaw nodes list
 cd /root/openclaw
 pnpm openclaw config set gateway.nodes.browser.node "<mac-node-id-or-name>"
 ```
+
+Validate these instructions first, they might not be correct or complete.
+
+--
 
 9. Install and attach Browser Relay on Mac.
 ```bash
